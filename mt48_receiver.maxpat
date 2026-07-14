@@ -143,7 +143,7 @@
 					"numinlets" : 1,
 					"numoutlets" : 0,
 					"patching_rect" : [ 30.0, 250.0, 420.0, 19.0 ],
-					"text" : "── フロントパネルのボタン（点灯 = 1 / 消灯 = 0）──"
+					"text" : "── フロントパネルのボタン（ボタンID・点灯 = 1 / 消灯 = 0。名前は /mt48/button/<id>/name で届く）──"
 				}
 
 			}
@@ -155,7 +155,7 @@
 					"numoutlets" : 6,
 					"outlettype" : [ "", "", "", "", "", "" ],
 					"patching_rect" : [ 30.0, 275.0, 673.0, 22.0 ],
-					"text" : "route /mt48/button/speaker_a /mt48/button/speaker_b /mt48/button/phones_1 /mt48/button/phones_2 /mt48/button/phones_3"
+					"text" : "route /mt48/button/1 /mt48/button/2 /mt48/button/3 /mt48/button/4 /mt48/button/101"
 				}
 
 			}
@@ -227,7 +227,7 @@
 					"numinlets" : 1,
 					"numoutlets" : 0,
 					"patching_rect" : [ 30.0, 342.0, 300.0, 18.0 ],
-					"text" : "SPK A    SPK B    PH 1     PH 2     PH 3"
+					"text" : "1 Stereo   2 Atmos   3 Phone1  4 Phone2  101 Phone3"
 				}
 
 			}
@@ -310,7 +310,8 @@
 					"numinlets" : 2,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 115.0, 465.0, 100.0, 22.0 ]
+					"patching_rect" : [ 115.0, 465.0, 100.0, 22.0 ],
+					"text" : "DAW"
 				}
 
 			}

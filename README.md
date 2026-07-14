@@ -113,8 +113,9 @@ curl -si -X POST "http://<MT48_IP>/cometd" \
 | **モニタリングのソース** | `/mt48/source` | `1002` |
 | ソース名 | `/mt48/source/name` | `AMP` |
 | モニターの Mono/Downmix | `/mt48/monitor/1500/mono` | `0` / `1` |
-| **フロントパネルのボタン** | `/mt48/button/<name>` | `0` / `1` |
-| ボタンの LED 色 | `/mt48/button/<name>/color` | `#ff3f00` |
+| **フロントパネルのボタン** | `/mt48/button/<id>` | `0` / `1` |
+| ボタンの名前 | `/mt48/button/<id>/name` | `Phone2` |
+| ボタンの LED 色 | `/mt48/button/<id>/color` | `#ff3f00` |
 | ノブの状態 | `/mt48/hw/rotary/...` | |
 | 上記以外すべて | `/mt48/raw/<パス>` | |
 
@@ -124,28 +125,34 @@ curl -si -X POST "http://<MT48_IP>/cometd" \
 送ってくるのは各ボタンの LED 状態（id・ラベル・背景色）の配列で、押すとその色が変わります。
 そこでブリッジ側で前回状態との差分を取り、**変化したボタンだけ**を送ります。
 
+アドレスは**ボタン ID** です。ボタンはモニターと 1 対 1 で対応しており
+（`monitors[].button_id`）、その名前（Stereo, Phone1 …）は MT48 側で変更できます。
+名前をソースに焼き込むと実機とズレるので、**名前は起動時に引いて併せて送ります**。
+
 ```
-/mt48/button/speaker_b 1          ← SPEAKER B を押して点灯
-/mt48/button/speaker_b/color #ff3f00
-/mt48/button/speaker_a 0          ← 排他なので A は同時に消灯
-/mt48/button/speaker_a/color #1a1a1a
+/mt48/button/2 1                  ← ボタン 2 (Atmos) を押して点灯
+/mt48/button/2/name Atmos
+/mt48/button/2/color #ff3f00
+/mt48/button/1 0                  ← 排他なのでボタン 1 (Stereo) は同時に消灯
+/mt48/button/1/name Stereo
+/mt48/button/1/color #1a1a1a
 ```
 
-実機で観測したボタンの対応：
+実機で観測したボタン：
 
-| id | ラベル | OSC アドレス | 点灯色 |
+| ボタン ID | 対応するモニター | 点灯色 | 消灯色 |
 |---|---|---|---|
-| 1 | A (Speaker) | `/mt48/button/speaker_a` | `#ffff8f` |
-| 2 | B (Speaker) | `/mt48/button/speaker_b` | `#ff3f00` |
-| 3 | 1 (Headphone) | `/mt48/button/phones_1` | `#10d708` |
-| 4 | 2 (Headphone) | `/mt48/button/phones_2` | `#bfbf00` |
-| 101 | 3 (HeadphoneVK) | `/mt48/button/phones_3` | `#f4383a` |
-| 6 | （不明） | `/mt48/button/key_6` | `#960000` |
-| 5, 200 | （不明・変化を観測せず） | `/mt48/button/key_5` など | — |
+| 1 | Stereo | `#ffff8f` | `#1a1a1a` |
+| 2 | Atmos | `#ff3f00` | `#1a1a1a` |
+| 3 | Phone1 | `#10d708` | `#1a1a1a` |
+| 4 | Phone2 | `#bfbf00` | `#1a1a1a` |
+| 101 | Phone3（仮想キー） | `#f4383a` | `#a0a0a0` |
+| 6 | （不明・モニター非対応） | `#960000` | `#0d0d0d` |
+| 5, 200 | （不明・変化を観測せず） | — | — |
 
 点灯/消灯の `0` / `1` は、ボタンごとの**消灯色**（`src/hw-buttons.ts` の `OFF_COLORS`）との比較で決めています。
-消灯色が未登録の id は `0`/`1` を出さず、`/color` だけを送ります。
-ボタンの名前や消灯色を足したいときは `src/hw-buttons.ts` の `BUTTON_NAMES` / `OFF_COLORS` に追記してください。
+点灯色はボタンごとに違いますが、消灯色は一定なのでこの方法が使えます。
+消灯色が未登録の id は `0`/`1` を出さず、`/name` と `/color` だけを送ります。
 
 なお接続直後の 1 回目は差分の基準を作るだけで送出しません
 （送ると、繋いだだけで全ボタンを押したかのような OSC が飛ぶため）。
@@ -161,19 +168,33 @@ curl -si -X POST "http://<MT48_IP>/cometd" \
 /mt48/source/name AMP
 ```
 
-ID だけでは何のことか分からないので、**起動時にソース名を引いて一緒に送ります**。
-名前の取得には MT48 の HTTP API を使っています（WebUI の `index.html` が使っているのと同じもの）。
+ボタンと違い、**ソースは接続直後にも 1 回送ります**（「今どれが選ばれているか」は起動時に知りたい状態のため）。
+
+### 名前はどこから来るか（MT48 の HTTP API）
+
+ボタン名もソース名も **MT48 側でユーザーが変更できる**ため、ソースコードには焼き込まず、
+起動時に MT48 から引いています（`src/device-api.ts`）。
+
+CometD には設定ツリー全体のスナップショットが流れてこないので、
+WebUI の `index.html` が使っているのと同じ HTTP API を叩きます。
 
 ```bash
 curl "http://<MT48_IP>/API/get_device_status:\$._oem_ui_process_engine.monitoring.sources"
 # => [{"id":1001,"name":"DAW",...},{"id":1002,"name":"AMP",...}]
+
+curl "http://<MT48_IP>/API/get_device_status:\$._oem_ui_process_engine.monitoring.monitors"
+# => [{"id":1500,"name":"Stereo","button_id":1,...}, ...]
 ```
 
-この API は任意の JSONPath でツリーを引けるので、パス構造を調べるときにも便利です。
-CometD には設定ツリー全体のスナップショットが流れてこないため、名前の類はここから取ります。
-名前が引けなかった場合は警告を出し、ID だけを送ります（`/mt48/source/name` は空文字）。
+`/API/get_device_status:<JSONPath>` は任意の JSONPath でツリーを引けるので、
+パス構造を調べるときにも便利です。
 
-ボタンと違い、**ソースは接続直後にも 1 回送ります**（「今どれが選ばれているか」は起動時に知りたい状態のため）。
+名前が引けなかった場合は警告を出すだけで起動は続行し、ID だけを送ります。
+
+```
+[bridge] monitors: 1=Stereo, 2=Atmos, 3=Phone1, 4=Phone2, 101=Phone3
+[bridge] sources: 1001=DAW, 1002=AMP
+```
 
 - **boolean は `0` / `1` の整数**で送ります（OSC の `T`/`F` 型タグだと値を伴わず、Max の toggle に直結できないため）
 - 整数と小数は OSC の型タグで撃ち分けます（`i` / `f`）
@@ -206,9 +227,12 @@ udpreceive 7400
   │    ├─ flonum   (volume)
   │    ├─ toggle   (mute)
   │    └─ toggle   (dim)
-  └─ route /mt48/button/speaker_a ... /mt48/button/phones_3
-       ├─ toggle × 5   (SPK A / SPK B / PH 1 / PH 2 / PH 3)
-       └─ print osc-unrouted                        ← それ以外
+  ├─ route /mt48/button/1 /mt48/button/2 /mt48/button/3 /mt48/button/4 /mt48/button/101
+  │    ├─ toggle × 5   (Stereo / Atmos / Phone1 / Phone2 / Phone3)
+  │    └─ print osc-unrouted                        ← それ以外
+  └─ route /mt48/source /mt48/source/name
+       ├─ number    (source id)
+       └─ message   (source 名)
 ```
 
 Max の `route` は**アドレスの完全一致**でしか拾えません。
@@ -235,6 +259,7 @@ mt48-bridge/
 │   ├── config.ts            # 環境変数
 │   ├── discover.ts          # MT48 の IP 自動探索
 │   ├── discover-cli.ts      # `npm run discover` の入口
+│   ├── device-api.ts        # MT48 の HTTP API（ボタン名 / ソース名の取得）
 │   ├── hw-buttons.ts        # フロントパネルのボタン（LED 差分 -> 押下）
 │   ├── sources.ts           # モニタリングのソース切り替え
 │   ├── osc-address.ts       # CometD パス -> OSC アドレス変換（中核）

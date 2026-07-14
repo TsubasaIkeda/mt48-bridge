@@ -10,6 +10,11 @@ import type { OscMessage } from "./osc-address.js";
  *
  * triggers は全ボタン分がまとめて毎回届くので、そのまま流すと Max 側で
  * 差分を取る羽目になる。ここで差分を取り、変化したボタンだけを送る。
+ *
+ * アドレスはボタン ID をそのまま使う（/mt48/button/1）。ボタンはモニターと
+ * 1 対 1 で対応しており（monitors[].button_id）、その名前 (Stereo, Phone1 ...)
+ * は MT48 側でユーザーが変更できる。名前をソースに焼き込むと実機とズレるので、
+ * 名前は起動時に引いて /mt48/button/<id>/name で併せて送る。
  */
 
 export interface Trigger {
@@ -22,34 +27,19 @@ export interface Trigger {
 }
 
 /**
- * 実機で観測した id とボタンの対応。
- * id はファームウェア側で固定されており、ラベル(text)とアイコン(image_url)から同定した。
- */
-const BUTTON_NAMES: Record<number, string> = {
-  1: "speaker_a", //  text "A" + Neumann_Speaker
-  2: "speaker_b", //  text "B" + Neumann_Speaker
-  3: "phones_1", //   text "1" + Neumann_Headphone
-  4: "phones_2", //   text "2" + Neumann_Headphone
-  101: "phones_3", // text "3" + Neumann_HeadphoneVK (仮想キー)
-};
-
-/** 未知の id は key_<id> で流す。取りこぼすよりマシで、後から名前を足せる。 */
-export const buttonName = (id: number): string => BUTTON_NAMES[id] ?? `key_${id}`;
-
-/**
  * 各ボタンの「消灯時の色」。実機で観測した値。
  *
- * 点灯色はボタンごとに違う（speaker_b は橙 #ff3f00、phones_1 は緑 #10d708 …）が、
+ * 点灯色はボタンごとに違う（Atmos は橙 #ff3f00、Phone1 は緑 #10d708 …）が、
  * 消灯色はボタンごとに一定なので、これと比較して点灯/消灯を 0/1 で出せる。
  * 一覧に無い id は点灯判定ができないため、色だけを送る。
  */
 const OFF_COLORS: Record<number, string> = {
-  1: "#1a1a1a", //   speaker_a
-  2: "#1a1a1a", //   speaker_b
-  3: "#1a1a1a", //   phones_1
-  4: "#1a1a1a", //   phones_2
-  6: "#0d0d0d", //   key_6
-  101: "#a0a0a0", // phones_3
+  1: "#1a1a1a", //   モニター (Stereo)
+  2: "#1a1a1a", //   モニター (Atmos)
+  3: "#1a1a1a", //   モニター (Phone1)
+  4: "#1a1a1a", //   モニター (Phone2)
+  6: "#0d0d0d", //   用途不明
+  101: "#a0a0a0", // モニター (Phone3) — 仮想キー
 };
 
 export interface ButtonTracker {
@@ -57,7 +47,11 @@ export interface ButtonTracker {
   update: (triggers: readonly Trigger[]) => OscMessage[];
 }
 
-export function createButtonTracker(): ButtonTracker {
+/**
+ * @param names ボタン ID -> 名前（monitors[].button_id -> monitors[].name）。
+ *              引けなかった ID は名前を送らない。
+ */
+export function createButtonTracker(names: ReadonlyMap<number, string>): ButtonTracker {
   let previous: Map<number, string> | null = null;
 
   return {
@@ -79,16 +73,24 @@ export function createButtonTracker(): ButtonTracker {
         const before = previous.get(id);
         if (before === undefined || before === color) continue;
 
-        const name = buttonName(id);
         const offColor = OFF_COLORS[id];
         if (offColor !== undefined) {
           messages.push({
-            address: `/mt48/button/${name}`,
+            address: `/mt48/button/${id}`,
             args: [{ type: "integer", value: color === offColor ? 0 : 1 }],
           });
         }
+
+        const name = names.get(id);
+        if (name !== undefined) {
+          messages.push({
+            address: `/mt48/button/${id}/name`,
+            args: [{ type: "string", value: name }],
+          });
+        }
+
         messages.push({
-          address: `/mt48/button/${name}/color`,
+          address: `/mt48/button/${id}/color`,
           args: [{ type: "string", value: color }],
         });
       }

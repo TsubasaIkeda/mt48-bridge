@@ -1,12 +1,13 @@
 import { CometD, type Message } from "cometd";
 import { adapt } from "cometd-nodejs-client";
 import { CORE_CHANNELS, cometdUrl, loadConfig, METER_CHANNELS } from "./config.js";
+import { fetchNames } from "./device-api.js";
 import { discoverHost } from "./discover.js";
 import { createButtonTracker, type Trigger } from "./hw-buttons.js";
 import { createLogger } from "./logger.js";
 import { toOscMessages } from "./osc-address.js";
 import { createOscSender } from "./osc-sender.js";
-import { createSourceTracker, fetchSourceNames, type Monitor } from "./sources.js";
+import { createSourceTracker, type Monitor } from "./sources.js";
 
 // CometD の JS クライアントはブラウザ前提なので、Node 用トランスポートを注入する。
 adapt();
@@ -51,8 +52,9 @@ const failureOf = (message: Message): unknown => {
   return failure ?? error ?? message;
 };
 
-const buttons = createButtonTracker();
-const sources = createSourceTracker(await fetchSourceNames(host, logger));
+// 名前 (ソース名 / モニター名) は MT48 側で変更できるので、焼き込まずに起動時に引く。
+const buttons = createButtonTracker(await fetchNames(host, "monitors", "button_id", logger));
+const sources = createSourceTracker(await fetchNames(host, "sources", "id", logger));
 
 /** フロントパネルのボタン状態か？（押下は色の変化としてしか届かない） */
 function asTriggers(data: RavennaUpdate): Trigger[] | null {
