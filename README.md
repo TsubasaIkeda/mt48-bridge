@@ -109,9 +109,44 @@ curl -si -X POST "http://<MT48_IP>/cometd" \
 | ボリューム | `/mt48/volume` | `-85` |
 | ミュート | `/mt48/mute` | `0` / `1` |
 | DIM | `/mt48/dim` | `0` / `1` |
+| 選択中のモニター | `/mt48/selected_monitor_id` | `1500` |
 | モニターの Mono/Downmix | `/mt48/monitor/1500/mono` | `0` / `1` |
-| 物理ボタン/ノブ | `/mt48/hw/<event>` | |
+| **フロントパネルのボタン** | `/mt48/button/<name>` | `0` / `1` |
+| ボタンの LED 色 | `/mt48/button/<name>/color` | `#ff3f00` |
+| ノブの状態 | `/mt48/hw/rotary/...` | |
 | 上記以外すべて | `/mt48/raw/<パス>` | |
+
+### フロントパネルのボタン
+
+**MT48 は「ボタンが押された」というイベントを送ってきません。**
+送ってくるのは各ボタンの LED 状態（id・ラベル・背景色）の配列で、押すとその色が変わります。
+そこでブリッジ側で前回状態との差分を取り、**変化したボタンだけ**を送ります。
+
+```
+/mt48/button/speaker_b 1          ← SPEAKER B を押して点灯
+/mt48/button/speaker_b/color #ff3f00
+/mt48/button/speaker_a 0          ← 排他なので A は同時に消灯
+/mt48/button/speaker_a/color #1a1a1a
+```
+
+実機で観測したボタンの対応：
+
+| id | ラベル | OSC アドレス | 点灯色 |
+|---|---|---|---|
+| 1 | A (Speaker) | `/mt48/button/speaker_a` | `#ffff8f` |
+| 2 | B (Speaker) | `/mt48/button/speaker_b` | `#ff3f00` |
+| 3 | 1 (Headphone) | `/mt48/button/phones_1` | `#10d708` |
+| 4 | 2 (Headphone) | `/mt48/button/phones_2` | `#bfbf00` |
+| 101 | 3 (HeadphoneVK) | `/mt48/button/phones_3` | `#f4383a` |
+| 6 | （不明） | `/mt48/button/key_6` | `#960000` |
+| 5, 200 | （不明・変化を観測せず） | `/mt48/button/key_5` など | — |
+
+点灯/消灯の `0` / `1` は、ボタンごとの**消灯色**（`src/hw-buttons.ts` の `OFF_COLORS`）との比較で決めています。
+消灯色が未登録の id は `0`/`1` を出さず、`/color` だけを送ります。
+ボタンの名前や消灯色を足したいときは `src/hw-buttons.ts` の `BUTTON_NAMES` / `OFF_COLORS` に追記してください。
+
+なお接続直後の 1 回目は差分の基準を作るだけで送出しません
+（送ると、繋いだだけで全ボタンを押したかのような OSC が飛ぶため）。
 
 - **boolean は `0` / `1` の整数**で送ります（OSC の `T`/`F` 型タグだと値を伴わず、Max の toggle に直結できないため）
 - 整数と小数は OSC の型タグで撃ち分けます（`i` / `f`）
@@ -140,10 +175,12 @@ const ALIAS_RULES = [
 ```
 udpreceive 7400
   ├─ print osc-raw                                  ← 全 OSC をコンソールへ
-  └─ route /mt48/volume /mt48/mute /mt48/dim
-       ├─ flonum   (volume)
-       ├─ toggle   (mute)
-       ├─ toggle   (dim)
+  ├─ route /mt48/volume /mt48/mute /mt48/dim
+  │    ├─ flonum   (volume)
+  │    ├─ toggle   (mute)
+  │    └─ toggle   (dim)
+  └─ route /mt48/button/speaker_a ... /mt48/button/phones_3
+       ├─ toggle × 5   (SPK A / SPK B / PH 1 / PH 2 / PH 3)
        └─ print osc-unrouted                        ← それ以外
 ```
 
@@ -171,6 +208,7 @@ mt48-bridge/
 │   ├── config.ts            # 環境変数
 │   ├── discover.ts          # MT48 の IP 自動探索
 │   ├── discover-cli.ts      # `npm run discover` の入口
+│   ├── hw-buttons.ts        # フロントパネルのボタン（LED 差分 -> 押下）
 │   ├── osc-address.ts       # CometD パス -> OSC アドレス変換（中核）
 │   ├── osc-sender.ts        # UDP/OSC 送信
 │   └── logger.ts

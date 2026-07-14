@@ -2,6 +2,7 @@ import { CometD, type Message } from "cometd";
 import { adapt } from "cometd-nodejs-client";
 import { CORE_CHANNELS, cometdUrl, loadConfig, METER_CHANNELS } from "./config.js";
 import { discoverHost } from "./discover.js";
+import { createButtonTracker, type Trigger } from "./hw-buttons.js";
 import { createLogger } from "./logger.js";
 import { toOscMessages } from "./osc-address.js";
 import { createOscSender } from "./osc-sender.js";
@@ -49,6 +50,15 @@ const failureOf = (message: Message): unknown => {
   return failure ?? error ?? message;
 };
 
+const buttons = createButtonTracker();
+
+/** フロントパネルのボタン状態か？（押下は色の変化としてしか届かない） */
+function asTriggers(data: RavennaUpdate): Trigger[] | null {
+  if (!data.path?.includes("remote_hw_event")) return null;
+  const triggers = (data.value as { triggers?: unknown } | undefined)?.triggers;
+  return Array.isArray(triggers) ? (triggers as Trigger[]) : null;
+}
+
 function handle(message: Message): void {
   const data = message.data as RavennaUpdate | undefined;
   if (!data) return;
@@ -56,6 +66,16 @@ function handle(message: Message): void {
   // path: "$" は全状態のスナップショット。起動直後に一度だけ、しかも巨大なので
   // 通常は捨てる（デバッグ時のみ流して構造を確認できるようにしておく）。
   if (data.path === "$" && !config.debug) return;
+
+  // ボタンは全 15 個ぶんの LED 状態がまとめて届く。そのまま流すと Max 側で
+  // 差分を取る羽目になるので、変化したボタンだけを送る。
+  const triggers = asTriggers(data);
+  if (triggers) {
+    for (const oscMessage of buttons.update(triggers)) {
+      osc.send(oscMessage);
+    }
+    return;
+  }
 
   for (const oscMessage of toOscMessages(data.path, data.value)) {
     osc.send(oscMessage);
