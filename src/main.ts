@@ -6,6 +6,7 @@ import { createButtonTracker, type Trigger } from "./hw-buttons.js";
 import { createLogger } from "./logger.js";
 import { toOscMessages } from "./osc-address.js";
 import { createOscSender } from "./osc-sender.js";
+import { createSourceTracker, fetchSourceNames, type Monitor } from "./sources.js";
 
 // CometD の JS クライアントはブラウザ前提なので、Node 用トランスポートを注入する。
 adapt();
@@ -51,12 +52,19 @@ const failureOf = (message: Message): unknown => {
 };
 
 const buttons = createButtonTracker();
+const sources = createSourceTracker(await fetchSourceNames(host, logger));
 
 /** フロントパネルのボタン状態か？（押下は色の変化としてしか届かない） */
 function asTriggers(data: RavennaUpdate): Trigger[] | null {
   if (!data.path?.includes("remote_hw_event")) return null;
   const triggers = (data.value as { triggers?: unknown } | undefined)?.triggers;
   return Array.isArray(triggers) ? (triggers as Trigger[]) : null;
+}
+
+/** 全モニターの設定配列か？（ソース切り替えはこの中の source_id_list に出る） */
+function asMonitors(data: RavennaUpdate): Monitor[] | null {
+  if (!data.path?.endsWith("monitoring.monitors")) return null;
+  return Array.isArray(data.value) ? (data.value as Monitor[]) : null;
 }
 
 function handle(message: Message): void {
@@ -72,6 +80,16 @@ function handle(message: Message): void {
   const triggers = asTriggers(data);
   if (triggers) {
     for (const oscMessage of buttons.update(triggers)) {
+      osc.send(oscMessage);
+    }
+    return;
+  }
+
+  // monitors は全モニターの設定が丸ごと届く（巨大）。ソース以外は使わないので、
+  // 生のまま流さずソースの変化だけを送る。
+  const monitors = asMonitors(data);
+  if (monitors) {
+    for (const oscMessage of sources.update(monitors)) {
       osc.send(oscMessage);
     }
     return;

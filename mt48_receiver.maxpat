@@ -10,8 +10,10 @@
 		}
 ,
 		"classnamespace" : "box",
-		"rect" : [ 34.0, 87.0, 1100.0, 700.0 ],
+		"rect" : [ 113.0, -1353.0, 2566.0, 1319.0 ],
+		"gridonopen" : 2,
 		"gridsize" : [ 15.0, 15.0 ],
+		"gridsnaponopen" : 2,
 		"integercoordinates" : 1,
 		"boxes" : [ 			{
 				"box" : 				{
@@ -67,7 +69,7 @@
 					"maxclass" : "comment",
 					"numinlets" : 1,
 					"numoutlets" : 0,
-					"patching_rect" : [ 30.0, 110.0, 200.0, 18.0 ],
+					"patching_rect" : [ 30.0, 110.0, 200.0, 19.0 ],
 					"text" : "── モニタリング ──"
 				}
 
@@ -140,7 +142,7 @@
 					"maxclass" : "comment",
 					"numinlets" : 1,
 					"numoutlets" : 0,
-					"patching_rect" : [ 30.0, 250.0, 420.0, 18.0 ],
+					"patching_rect" : [ 30.0, 250.0, 420.0, 19.0 ],
 					"text" : "── フロントパネルのボタン（点灯 = 1 / 消灯 = 0）──"
 				}
 
@@ -152,7 +154,7 @@
 					"numinlets" : 6,
 					"numoutlets" : 6,
 					"outlettype" : [ "", "", "", "", "", "" ],
-					"patching_rect" : [ 30.0, 275.0, 660.0, 22.0 ],
+					"patching_rect" : [ 30.0, 275.0, 673.0, 22.0 ],
 					"text" : "route /mt48/button/speaker_a /mt48/button/speaker_b /mt48/button/phones_1 /mt48/button/phones_2 /mt48/button/phones_3"
 				}
 
@@ -244,72 +246,91 @@
 				"box" : 				{
 					"fontsize" : 10.0,
 					"id" : "obj-c-other",
+					"linecount" : 2,
 					"maxclass" : "comment",
 					"numinlets" : 1,
 					"numoutlets" : 0,
-					"patching_rect" : [ 340.0, 342.0, 640.0, 32.0 ],
-					"linecount" : 2,
+					"patching_rect" : [ 340.0, 342.0, 640.0, 29.0 ],
 					"text" : "← /mt48/button/*/color, /mt48/monitor/..., /mt48/raw/... など。route はアドレス完全一致なので、階層でまとめて拾うには CNMAT の OSC-route を使う"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"fontsize" : 11.0,
+					"id" : "obj-c-src",
+					"maxclass" : "comment",
+					"numinlets" : 1,
+					"numoutlets" : 0,
+					"patching_rect" : [ 30.0, 400.0, 420.0, 19.0 ],
+					"text" : "── モニタリングのソース（入力）──"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-sroute",
+					"maxclass" : "newobj",
+					"numinlets" : 3,
+					"numoutlets" : 3,
+					"outlettype" : [ "", "", "" ],
+					"patching_rect" : [ 30.0, 425.0, 260.0, 22.0 ],
+					"text" : "route /mt48/source /mt48/source/name"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-src-id",
+					"maxclass" : "number",
+					"numinlets" : 1,
+					"numoutlets" : 2,
+					"outlettype" : [ "", "bang" ],
+					"parameter_enable" : 0,
+					"patching_rect" : [ 30.0, 465.0, 70.0, 22.0 ]
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-src-set",
+					"maxclass" : "newobj",
+					"numinlets" : 1,
+					"numoutlets" : 1,
+					"outlettype" : [ "" ],
+					"patching_rect" : [ 115.0, 425.0, 80.0, 22.0 ],
+					"text" : "prepend set"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-src-name",
+					"maxclass" : "message",
+					"numinlets" : 2,
+					"numoutlets" : 1,
+					"outlettype" : [ "" ],
+					"patching_rect" : [ 115.0, 465.0, 100.0, 22.0 ]
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"fontsize" : 10.0,
+					"id" : "obj-c-src2",
+					"maxclass" : "comment",
+					"numinlets" : 1,
+					"numoutlets" : 0,
+					"patching_rect" : [ 30.0, 492.0, 300.0, 18.0 ],
+					"text" : "source id            source 名 (DAW / AMP)"
 				}
 
 			}
  ],
 		"lines" : [ 			{
 				"patchline" : 				{
-					"destination" : [ "obj-print-raw", 0 ],
-					"order" : 2,
-					"source" : [ "obj-udp", 0 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
-					"destination" : [ "obj-route", 0 ],
-					"order" : 1,
-					"source" : [ "obj-udp", 0 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
-					"destination" : [ "obj-broute", 0 ],
-					"order" : 0,
-					"source" : [ "obj-udp", 0 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
-					"destination" : [ "obj-vol-num", 0 ],
-					"source" : [ "obj-route", 0 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
-					"destination" : [ "obj-mute-tog", 0 ],
-					"source" : [ "obj-route", 1 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
-					"destination" : [ "obj-dim-tog", 0 ],
-					"source" : [ "obj-route", 2 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
-					"destination" : [ "obj-spk-a", 0 ],
-					"source" : [ "obj-broute", 0 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
-					"destination" : [ "obj-spk-b", 0 ],
-					"source" : [ "obj-broute", 1 ]
+					"destination" : [ "obj-btn-other", 0 ],
+					"source" : [ "obj-broute", 5 ]
 				}
 
 			}
@@ -336,8 +357,89 @@
 			}
 , 			{
 				"patchline" : 				{
-					"destination" : [ "obj-btn-other", 0 ],
-					"source" : [ "obj-broute", 5 ]
+					"destination" : [ "obj-spk-a", 0 ],
+					"source" : [ "obj-broute", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-spk-b", 0 ],
+					"source" : [ "obj-broute", 1 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-dim-tog", 0 ],
+					"source" : [ "obj-route", 2 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-mute-tog", 0 ],
+					"source" : [ "obj-route", 1 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-vol-num", 0 ],
+					"source" : [ "obj-route", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-src-name", 0 ],
+					"source" : [ "obj-src-set", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-src-id", 0 ],
+					"source" : [ "obj-sroute", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-src-set", 0 ],
+					"source" : [ "obj-sroute", 1 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-broute", 0 ],
+					"order" : 2,
+					"source" : [ "obj-udp", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-print-raw", 0 ],
+					"order" : 0,
+					"source" : [ "obj-udp", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-route", 0 ],
+					"order" : 3,
+					"source" : [ "obj-udp", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-sroute", 0 ],
+					"order" : 1,
+					"source" : [ "obj-udp", 0 ]
 				}
 
 			}

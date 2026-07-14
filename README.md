@@ -110,6 +110,8 @@ curl -si -X POST "http://<MT48_IP>/cometd" \
 | ミュート | `/mt48/mute` | `0` / `1` |
 | DIM | `/mt48/dim` | `0` / `1` |
 | 選択中のモニター | `/mt48/selected_monitor_id` | `1500` |
+| **モニタリングのソース** | `/mt48/source` | `1002` |
+| ソース名 | `/mt48/source/name` | `AMP` |
 | モニターの Mono/Downmix | `/mt48/monitor/1500/mono` | `0` / `1` |
 | **フロントパネルのボタン** | `/mt48/button/<name>` | `0` / `1` |
 | ボタンの LED 色 | `/mt48/button/<name>/color` | `#ff3f00` |
@@ -147,6 +149,31 @@ curl -si -X POST "http://<MT48_IP>/cometd" \
 
 なお接続直後の 1 回目は差分の基準を作るだけで送出しません
 （送ると、繋いだだけで全ボタンを押したかのような OSC が飛ぶため）。
+
+### モニタリングのソース
+
+こちらも専用イベントはありません。届くのは `monitoring.monitors` = 全モニターの設定配列で、
+各モニターの `source_id_list[0]` に現在のソース ID が入っています。
+全モニターが同じ値を指すため、実質グローバルな 1 つの値です。
+
+```
+/mt48/source 1002
+/mt48/source/name AMP
+```
+
+ID だけでは何のことか分からないので、**起動時にソース名を引いて一緒に送ります**。
+名前の取得には MT48 の HTTP API を使っています（WebUI の `index.html` が使っているのと同じもの）。
+
+```bash
+curl "http://<MT48_IP>/API/get_device_status:\$._oem_ui_process_engine.monitoring.sources"
+# => [{"id":1001,"name":"DAW",...},{"id":1002,"name":"AMP",...}]
+```
+
+この API は任意の JSONPath でツリーを引けるので、パス構造を調べるときにも便利です。
+CometD には設定ツリー全体のスナップショットが流れてこないため、名前の類はここから取ります。
+名前が引けなかった場合は警告を出し、ID だけを送ります（`/mt48/source/name` は空文字）。
+
+ボタンと違い、**ソースは接続直後にも 1 回送ります**（「今どれが選ばれているか」は起動時に知りたい状態のため）。
 
 - **boolean は `0` / `1` の整数**で送ります（OSC の `T`/`F` 型タグだと値を伴わず、Max の toggle に直結できないため）
 - 整数と小数は OSC の型タグで撃ち分けます（`i` / `f`）
@@ -209,6 +236,7 @@ mt48-bridge/
 │   ├── discover.ts          # MT48 の IP 自動探索
 │   ├── discover-cli.ts      # `npm run discover` の入口
 │   ├── hw-buttons.ts        # フロントパネルのボタン（LED 差分 -> 押下）
+│   ├── sources.ts           # モニタリングのソース切り替え
 │   ├── osc-address.ts       # CometD パス -> OSC アドレス変換（中核）
 │   ├── osc-sender.ts        # UDP/OSC 送信
 │   └── logger.ts
