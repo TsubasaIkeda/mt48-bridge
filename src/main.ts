@@ -1,0 +1,115 @@
+import { CometD, type Message } from "cometd";
+import { adapt } from "cometd-nodejs-client";
+import { CORE_CHANNELS, cometdUrl, loadConfig, METER_CHANNELS } from "./config.js";
+import { discoverHost } from "./discover.js";
+import { createLogger } from "./logger.js";
+import { toOscMessages } from "./osc-address.js";
+import { createOscSender } from "./osc-sender.js";
+
+// CometD の JS クライアントはブラウザ前提なので、Node 用トランスポートを注入する。
+adapt();
+
+const config = loadConfig();
+const logger = createLogger(config.debug);
+
+const host = config.host ?? (await discoverHost(logger));
+if (!host) {
+  logger.error("MT48 が見つかりません。MT48_HOST=<IP> を指定するか、接続を確認してください。");
+  process.exit(1);
+}
+
+logger.info(`MT48 CometD: ${cometdUrl(host)}`);
+logger.info(`OSC out:     ${config.oscHost}:${config.oscPort}`);
+logger.info(`Meters:      ${config.meters ? "ON" : "OFF"}`);
+
+const osc = createOscSender(config.oscHost, config.oscPort, logger);
+
+const cometd = new CometD();
+cometd.configure({
+  url: cometdUrl(host),
+  logLevel: config.debug ? "info" : "warn",
+  maxNetworkDelay: 10_000,
+});
+
+// 接続安定性を優先し long-polling に固定する（WebSocket は使わない）。
+cometd.unregisterTransport("websocket");
+cometd.unregisterTransport("callback-polling");
+logger.info("CometD transport: long-polling (forced)");
+
+interface RavennaUpdate {
+  path?: string;
+  value?: unknown;
+}
+
+/** CometD は失敗時に message.failure を生やすが、公式の型定義には含まれていない。 */
+type FailureMessage = Message & { failure?: unknown };
+
+const failureOf = (message: Message): unknown => {
+  const { failure, error } = message as FailureMessage;
+  return failure ?? error ?? message;
+};
+
+function handle(message: Message): void {
+  const data = message.data as RavennaUpdate | undefined;
+  if (!data) return;
+
+  // path: "$" は全状態のスナップショット。起動直後に一度だけ、しかも巨大なので
+  // 通常は捨てる（デバッグ時のみ流して構造を確認できるようにしておく）。
+  if (data.path === "$" && !config.debug) return;
+
+  for (const oscMessage of toOscMessages(data.path, data.value)) {
+    osc.send(oscMessage);
+  }
+}
+
+cometd.addListener("/meta/handshake", (message) => {
+  if (!message.successful) logger.error("handshake 失敗:", failureOf(message));
+});
+
+let transportReported = false;
+cometd.addListener("/meta/connect", (message) => {
+  if (!message.successful) {
+    logger.warn("connect 失敗:", failureOf(message));
+    return;
+  }
+  if (!transportReported) {
+    logger.info("connected transport =", message.connectionType ?? "long-polling");
+    transportReported = true;
+  }
+});
+
+cometd.addListener("/meta/disconnect", (message) =>
+  logger.info("disconnected:", message.successful),
+);
+
+cometd.handshake({ supportedConnectionTypes: ["long-polling"] }, (reply) => {
+  if (!reply.successful) {
+    logger.error("handshake 失敗:", failureOf(reply));
+    return;
+  }
+  logger.info("connected, clientId =", cometd.getClientId());
+
+  const channels = config.meters ? [...CORE_CHANNELS, ...METER_CHANNELS] : [...CORE_CHANNELS];
+  for (const channel of channels) {
+    cometd.subscribe(channel, handle);
+    logger.info("subscribed", channel);
+  }
+});
+
+let shuttingDown = false;
+async function shutdown(): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info("shutting down...");
+
+  // disconnect が返らないまま吊られることがあるので、猶予を切って必ず終わらせる。
+  await Promise.race([
+    new Promise<void>((resolve) => cometd.disconnect(() => resolve())),
+    new Promise<void>((resolve) => setTimeout(resolve, 1500)),
+  ]);
+  await osc.close();
+  process.exit(0);
+}
+
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());
