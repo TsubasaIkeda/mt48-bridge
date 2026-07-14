@@ -1,10 +1,8 @@
 import { CometD, type Message } from "cometd";
 import { adapt } from "cometd-nodejs-client";
-import { CORE_CHANNELS, cometdUrl, loadConfig, METER_CHANNELS } from "./config.js";
 import { fetchNames } from "./device-api.js";
-import { discoverHost } from "./discover.js";
+import { config, log } from "./env.js";
 import { createButtonTracker, type Trigger } from "./hw-buttons.js";
-import { createLogger } from "./logger.js";
 import { toOscMessages } from "./osc-address.js";
 import { createOscSender } from "./osc-sender.js";
 import { createSourceTracker, type Monitor } from "./sources.js";
@@ -12,24 +10,23 @@ import { createSourceTracker, type Monitor } from "./sources.js";
 // CometD の JS クライアントはブラウザ前提なので、Node 用トランスポートを注入する。
 adapt();
 
-const config = loadConfig();
-const logger = createLogger(config.debug);
+const COMETD_URL = `http://${config.host}/cometd`;
+const CORE_CHANNELS = ["/ravenna/settings", "/ravenna/status"];
+const METER_CHANNELS = ["/ravenna/meter", "/ravenna/monitoring_meters"];
 
-const host = config.host ?? (await discoverHost(logger));
-if (!host) {
-  logger.error("MT48 が見つかりません。MT48_HOST=<IP> を指定するか、接続を確認してください。");
-  process.exit(1);
-}
+log.info(`MT48 CometD: ${COMETD_URL}`);
+log.info(`OSC out:     ${config.oscHost}:${config.oscPort}`);
+log.info(`Meters:      ${config.meters ? "ON" : "OFF"}`);
 
-logger.info(`MT48 CometD: ${cometdUrl(host)}`);
-logger.info(`OSC out:     ${config.oscHost}:${config.oscPort}`);
-logger.info(`Meters:      ${config.meters ? "ON" : "OFF"}`);
+const osc = createOscSender();
 
-const osc = createOscSender(config.oscHost, config.oscPort, logger);
+// 名前 (モニター名 / ソース名) は MT48 側で変更できるので、焼き込まずに起動時に引く。
+const buttons = createButtonTracker(await fetchNames("monitors", "button_id"));
+const sources = createSourceTracker(await fetchNames("sources", "id"));
 
 const cometd = new CometD();
 cometd.configure({
-  url: cometdUrl(host),
+  url: COMETD_URL,
   logLevel: config.debug ? "info" : "warn",
   maxNetworkDelay: 10_000,
 });
@@ -37,7 +34,6 @@ cometd.configure({
 // 接続安定性を優先し long-polling に固定する（WebSocket は使わない）。
 cometd.unregisterTransport("websocket");
 cometd.unregisterTransport("callback-polling");
-logger.info("CometD transport: long-polling (forced)");
 
 interface RavennaUpdate {
   path?: string;
@@ -45,29 +41,10 @@ interface RavennaUpdate {
 }
 
 /** CometD は失敗時に message.failure を生やすが、公式の型定義には含まれていない。 */
-type FailureMessage = Message & { failure?: unknown };
-
 const failureOf = (message: Message): unknown => {
-  const { failure, error } = message as FailureMessage;
+  const { failure, error } = message as Message & { failure?: unknown };
   return failure ?? error ?? message;
 };
-
-// 名前 (ソース名 / モニター名) は MT48 側で変更できるので、焼き込まずに起動時に引く。
-const buttons = createButtonTracker(await fetchNames(host, "monitors", "button_id", logger));
-const sources = createSourceTracker(await fetchNames(host, "sources", "id", logger));
-
-/** フロントパネルのボタン状態か？（押下は色の変化としてしか届かない） */
-function asTriggers(data: RavennaUpdate): Trigger[] | null {
-  if (!data.path?.includes("remote_hw_event")) return null;
-  const triggers = (data.value as { triggers?: unknown } | undefined)?.triggers;
-  return Array.isArray(triggers) ? (triggers as Trigger[]) : null;
-}
-
-/** 全モニターの設定配列か？（ソース切り替えはこの中の source_id_list に出る） */
-function asMonitors(data: RavennaUpdate): Monitor[] | null {
-  if (!data.path?.endsWith("monitoring.monitors")) return null;
-  return Array.isArray(data.value) ? (data.value as Monitor[]) : null;
-}
 
 function handle(message: Message): void {
   const data = message.data as RavennaUpdate | undefined;
@@ -77,62 +54,40 @@ function handle(message: Message): void {
   // 通常は捨てる（デバッグ時のみ流して構造を確認できるようにしておく）。
   if (data.path === "$" && !config.debug) return;
 
-  // ボタンは全 15 個ぶんの LED 状態がまとめて届く。そのまま流すと Max 側で
-  // 差分を取る羽目になるので、変化したボタンだけを送る。
-  const triggers = asTriggers(data);
-  if (triggers) {
-    for (const oscMessage of buttons.update(triggers)) {
-      osc.send(oscMessage);
-    }
+  // ボタンは全 15 個ぶんの LED 状態が、ソースは全モニターの設定が、それぞれ丸ごと
+  // 毎回届く。そのまま流すと Max 側で差分を取る羽目になるので、変化分だけを送る。
+  const triggers = (data.value as { triggers?: unknown } | undefined)?.triggers;
+  if (data.path?.includes("remote_hw_event") && Array.isArray(triggers)) {
+    for (const oscMessage of buttons.update(triggers as Trigger[])) osc.send(oscMessage);
     return;
   }
 
-  // monitors は全モニターの設定が丸ごと届く（巨大）。ソース以外は使わないので、
-  // 生のまま流さずソースの変化だけを送る。
-  const monitors = asMonitors(data);
-  if (monitors) {
-    for (const oscMessage of sources.update(monitors)) {
-      osc.send(oscMessage);
-    }
+  if (data.path?.endsWith("monitoring.monitors") && Array.isArray(data.value)) {
+    for (const oscMessage of sources.update(data.value as Monitor[])) osc.send(oscMessage);
     return;
   }
 
-  for (const oscMessage of toOscMessages(data.path, data.value)) {
-    osc.send(oscMessage);
-  }
+  for (const oscMessage of toOscMessages(data.path, data.value)) osc.send(oscMessage);
 }
 
 cometd.addListener("/meta/handshake", (message) => {
-  if (!message.successful) logger.error("handshake 失敗:", failureOf(message));
+  if (!message.successful) log.error("handshake 失敗:", failureOf(message));
 });
-
-let transportReported = false;
 cometd.addListener("/meta/connect", (message) => {
-  if (!message.successful) {
-    logger.warn("connect 失敗:", failureOf(message));
-    return;
-  }
-  if (!transportReported) {
-    logger.info("connected transport =", message.connectionType ?? "long-polling");
-    transportReported = true;
-  }
+  if (!message.successful) log.warn("connect 失敗:", failureOf(message));
 });
-
-cometd.addListener("/meta/disconnect", (message) =>
-  logger.info("disconnected:", message.successful),
-);
 
 cometd.handshake({ supportedConnectionTypes: ["long-polling"] }, (reply) => {
   if (!reply.successful) {
-    logger.error("handshake 失敗:", failureOf(reply));
+    log.error("handshake 失敗:", failureOf(reply));
     return;
   }
-  logger.info("connected, clientId =", cometd.getClientId());
+  log.info("connected, clientId =", cometd.getClientId());
 
-  const channels = config.meters ? [...CORE_CHANNELS, ...METER_CHANNELS] : [...CORE_CHANNELS];
+  const channels = config.meters ? [...CORE_CHANNELS, ...METER_CHANNELS] : CORE_CHANNELS;
   for (const channel of channels) {
     cometd.subscribe(channel, handle);
-    logger.info("subscribed", channel);
+    log.info("subscribed", channel);
   }
 });
 
@@ -140,7 +95,7 @@ let shuttingDown = false;
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
-  logger.info("shutting down...");
+  log.info("shutting down...");
 
   // disconnect が返らないまま吊られることがあるので、猶予を切って必ず終わらせる。
   await Promise.race([

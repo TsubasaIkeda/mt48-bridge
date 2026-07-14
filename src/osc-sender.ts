@@ -1,6 +1,6 @@
 import dgram from "node:dgram";
 import { toBuffer } from "osc-min";
-import type { Logger } from "./logger.js";
+import { config, log } from "./env.js";
 import type { OscMessage } from "./osc-address.js";
 
 /**
@@ -15,9 +15,9 @@ export interface OscSender {
   close: () => Promise<void>;
 }
 
-export function createOscSender(host: string, port: number, logger: Logger): OscSender {
+export function createOscSender(): OscSender {
   const socket = dgram.createSocket("udp4");
-  socket.on("error", (error) => logger.error("[osc]", error.message));
+  socket.on("error", (error) => log.error("[osc]", error.message));
   socket.unref();
 
   return {
@@ -27,14 +27,14 @@ export function createOscSender(host: string, port: number, logger: Logger): Osc
         const view = toBuffer({ address, args });
         packet = Buffer.from(view.buffer, view.byteOffset, view.byteLength);
       } catch (error) {
-        logger.error("[osc] エンコード失敗", address, (error as Error).message);
+        log.error("[osc] エンコード失敗", address, (error as Error).message);
         return;
       }
 
-      socket.send(packet, port, host, (error) => {
-        if (error) logger.error("[osc] 送信失敗", address, error.message);
+      socket.send(packet, config.oscPort, config.oscHost, (error) => {
+        if (error) log.error("[osc] 送信失敗", address, error.message);
       });
-      logger.debug("OSC", address, args.map((arg) => arg.value).join(" "));
+      log.debug("OSC", address, args.map((arg) => arg.value).join(" "));
     },
 
     close() {

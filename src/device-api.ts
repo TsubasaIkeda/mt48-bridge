@@ -1,62 +1,42 @@
-import type { Logger } from "./logger.js";
+import { config, log } from "./env.js";
 
 /**
- * MT48 の HTTP API。
+ * MT48 の HTTP API から、ボタン名 / ソース名の対応表を引く。
  *
- * `/API/get_device_status:<JSONPath>` で設定ツリーの任意の場所を引ける。
- * WebUI の index.html が使っているのと同じもの。
+ * `/API/get_device_status:<JSONPath>` で設定ツリーの任意の場所を引ける
+ * （WebUI の index.html が使っているのと同じもの）。CometD には設定ツリー全体の
+ * スナップショットが流れてこないため、名前のような「変化しない定義」はここから取る。
  *
- * CometD には設定ツリー全体のスナップショットが流れてこないため、
- * ソース名やモニター名のような「変化しない定義」はここから取る。
- */
-export async function getDeviceStatus(
-  host: string,
-  jsonPath: string,
-  timeoutMs = 5000,
-): Promise<unknown> {
-  const url = `http://${host}/API/get_device_status:${jsonPath}`;
-  const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-  const body = (await response.json()) as { data?: { value?: unknown } };
-  return body.data?.value;
-}
-
-/** id と name を持つ定義（sources, monitors など）。 */
-interface NamedEntry {
-  id?: number;
-  name?: string;
-  button_id?: number;
-}
-
-/**
- * `monitoring.<key>` の配列を引き、<keyField> -> name の対応表にする。
- * 引けなくても致命的ではない（ID だけは送れる）ので、失敗時は空の表を返す。
+ * 名前は MT48 側でユーザーが変更できるので、ソースには焼き込まない。
+ *
+ * @param key      monitoring 配下のキー（"monitors" / "sources"）
+ * @param keyField 対応表のキーにするフィールド（ボタンは button_id、ソースは id）
  */
 export async function fetchNames(
-  host: string,
-  key: string,
+  key: "monitors" | "sources",
   keyField: "id" | "button_id",
-  logger: Logger,
 ): Promise<Map<number, string>> {
   const names = new Map<number, string>();
+  const url = `http://${config.host}/API/get_device_status:$._oem_ui_process_engine.monitoring.${key}`;
 
   try {
-    const value = await getDeviceStatus(host, `$._oem_ui_process_engine.monitoring.${key}`);
-    if (!Array.isArray(value)) throw new Error(`${key} が配列ではない`);
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    for (const entry of value as NamedEntry[]) {
+    const body = (await response.json()) as { data?: { value?: unknown } };
+    const entries = body.data?.value;
+    if (!Array.isArray(entries)) throw new Error(`${key} が配列ではない`);
+
+    for (const entry of entries as { id?: number; name?: string; button_id?: number }[]) {
       const id = entry[keyField];
       if (typeof id === "number" && typeof entry.name === "string") {
         names.set(id, entry.name);
       }
     }
-    logger.info(`${key}:`, [...names].map(([id, name]) => `${id}=${name}`).join(", ") || "(なし)");
+    log.info(`${key}:`, [...names].map(([id, name]) => `${id}=${name}`).join(", ") || "(なし)");
   } catch (error) {
-    logger.warn(
-      `${key} の名前を取得できませんでした（ID のみ送出します）:`,
-      (error as Error).message,
-    );
+    // 名前が引けなくても ID は送れる。落とすほどのことではない。
+    log.warn(`${key} の名前を取得できません（ID のみ送出します）:`, (error as Error).message);
   }
 
   return names;
