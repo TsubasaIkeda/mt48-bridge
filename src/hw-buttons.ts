@@ -40,6 +40,9 @@ const OFF_COLORS: Record<number, string> = {
   4: "#1a1a1a", //   モニター (Phone2)
   6: "#0d0d0d", //   用途不明
   101: "#a0a0a0", // モニター (Phone3) — 仮想キー
+  102: "#a0a0a0", // モニター (Phone4) — 仮想キー
+  103: "#a0a0a0", // モニター (Phone5) — 仮想キー
+  104: "#a0a0a0", // モニター (Phone6) — 仮想キー
 };
 
 export interface ButtonTracker {
