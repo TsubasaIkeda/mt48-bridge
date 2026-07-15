@@ -1,9 +1,11 @@
 import { CometD, type Message } from "cometd";
 import { adapt } from "cometd-nodejs-client";
-import { fetchNames } from "./device-api.js";
+import { createController } from "./control.js";
+import { fetchNames, fetchPhoneMonitors } from "./device-api.js";
 import { config, log } from "./env.js";
 import { createButtonTracker, type Trigger } from "./hw-buttons.js";
 import { toOscMessages } from "./osc-address.js";
+import { createOscReceiver } from "./osc-receiver.js";
 import { createOscSender } from "./osc-sender.js";
 import { createSourceTracker, type Monitor } from "./sources.js";
 
@@ -16,6 +18,7 @@ const METER_CHANNELS = ["/ravenna/meter", "/ravenna/monitoring_meters"];
 
 log.info(`MT48 CometD: ${COMETD_URL}`);
 log.info(`OSC out:     ${config.oscHost}:${config.oscPort}`);
+log.info(`OSC in:      ${config.oscInHost}:${config.oscInPort}`);
 log.info(`Meters:      ${config.meters ? "ON" : "OFF"}`);
 
 const osc = createOscSender();
@@ -23,6 +26,11 @@ const osc = createOscSender();
 // 名前 (モニター名 / ソース名) は MT48 側で変更できるので、焼き込まずに起動時に引く。
 const buttons = createButtonTracker(await fetchNames("monitors", "button_id"));
 const sources = createSourceTracker(await fetchNames("sources", "id"));
+
+// Phone 番号 <-> モニター ID。制御 (Max -> MT48) と読み取り (MT48 -> Max) の両方で使う。
+const phoneMonitors = await fetchPhoneMonitors();
+const phoneByMonitorId = new Map<number, number>();
+for (const [phoneNo, monitorId] of phoneMonitors) phoneByMonitorId.set(monitorId, phoneNo);
 
 const cometd = new CometD();
 cometd.configure({
@@ -67,7 +75,28 @@ function handle(message: Message): void {
     return;
   }
 
+  // Phone のレベルは単一モニター更新 (monitors[?(@.id==N)][0] に { volume }) として届く。
+  // ID (1502...) のままでは分かりづらいので、Phone 番号のアドレスへ寄せて送る。
+  const monitorId = singleMonitorId(data.path);
+  if (monitorId !== undefined) {
+    const phoneNo = phoneByMonitorId.get(monitorId);
+    const volume = (data.value as { volume?: unknown } | undefined)?.volume;
+    if (phoneNo !== undefined && typeof volume === "number") {
+      osc.send({
+        address: `/mt48/phone/${phoneNo}/volume`,
+        args: [{ type: "integer", value: volume }],
+      });
+      return;
+    }
+  }
+
   for (const oscMessage of toOscMessages(data.path, data.value)) osc.send(oscMessage);
+}
+
+/** `...monitors[?(@.id==N)][0]` 形式の path からモニター ID を取り出す。 */
+function singleMonitorId(path: string | undefined): number | undefined {
+  const matched = path && /monitors\[\?\(\s*@\.id\s*==\s*(\d+)\s*\)\]\[0\]$/.exec(path);
+  return matched ? Number.parseInt(matched[1] as string, 10) : undefined;
 }
 
 let connected = false;
@@ -128,6 +157,17 @@ cometd.addListener("/meta/connect", (message) => {
 
 cometd.handshake({ supportedConnectionTypes: ["long-polling"] });
 
+// --- 制御 (Max -> MT48) ---
+// 受信 OSC を CometD publish へ。未接続時は捨てる（送っても届かないため）。
+const controller = createController((path, value) => {
+  if (!connected) {
+    log.warn("control: 未接続のため無視:", path);
+    return;
+  }
+  cometd.publish("/service/ravenna/settings", { path, value });
+}, phoneMonitors);
+const receiver = createOscReceiver((address, args) => controller.handle(address, args));
+
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -139,6 +179,7 @@ async function shutdown(): Promise<void> {
     new Promise<void>((resolve) => cometd.disconnect(() => resolve())),
     new Promise<void>((resolve) => setTimeout(resolve, 1500)),
   ]);
+  await receiver.close();
   await osc.close();
   process.exit(0);
 }

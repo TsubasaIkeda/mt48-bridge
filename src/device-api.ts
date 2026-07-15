@@ -41,3 +41,26 @@ export async function fetchNames(
 
   return names;
 }
+
+/**
+ * Phone モニターの「番号 -> モニター ID」対応表を引く。
+ *
+ * Phone のレベルを操作/取得するには、publish 先のモニター ID
+ * （実機では Phone1=1502, Phone2=1503 ...）が必要になる。ただし ID の割り当ては
+ * 機体差の可能性があるため焼き込まず、起動時に monitors の name ("Phone1" 等) から
+ * 番号を解決する。名前はユーザーが変更できるので、既定名から外れていると引けない。
+ *
+ * @returns 例) Map { 1 => 1502, 2 => 1503, 3 => 1504 }
+ */
+export async function fetchPhoneMonitors(): Promise<Map<number, number>> {
+  const names = await fetchNames("monitors", "id");
+  const phones = new Map<number, number>();
+
+  for (const [id, name] of names) {
+    const matched = /^phone\s*(\d+)$/i.exec(name.trim());
+    if (matched) phones.set(Number.parseInt(matched[1] as string, 10), id);
+  }
+
+  log.info("phones:", [...phones].map(([no, id]) => `${no}=id${id}`).join(", ") || "(見つからず)");
+  return phones;
+}
