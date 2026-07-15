@@ -70,31 +70,68 @@ function handle(message: Message): void {
   for (const oscMessage of toOscMessages(data.path, data.value)) osc.send(oscMessage);
 }
 
-cometd.addListener("/meta/handshake", (message) => {
-  if (!message.successful) log.error("handshake 失敗:", failureOf(message));
-});
-cometd.addListener("/meta/connect", (message) => {
-  if (!message.successful) log.warn("connect 失敗:", failureOf(message));
-});
+let connected = false;
+let shuttingDown = false;
+let reconnectTimer: ReturnType<typeof setInterval> | undefined;
 
-cometd.handshake({ supportedConnectionTypes: ["long-polling"] }, (reply) => {
-  if (!reply.successful) {
-    log.error("handshake 失敗:", failureOf(reply));
-    return;
-  }
-  log.info("connected, clientId =", cometd.getClientId());
-
+function subscribeChannels(): void {
   const channels = config.meters ? [...CORE_CHANNELS, ...METER_CHANNELS] : CORE_CHANNELS;
   for (const channel of channels) {
     cometd.subscribe(channel, handle);
     log.info("subscribed", channel);
   }
+}
+
+/** 接続が確立できていない間、reconnectInterval ごとに再 handshake を試みる。 */
+function startReconnect(): void {
+  if (shuttingDown || reconnectTimer) return;
+  log.info(`reconnect: ${config.reconnectInterval / 1000}s ごとに再試行します`);
+  reconnectTimer = setInterval(() => {
+    if (connected || shuttingDown) return; // 接続済み/終了中はスキップ（成功時に停止する）
+    log.info("re-handshake を試みます...");
+    cometd.handshake({ supportedConnectionTypes: ["long-polling"] });
+  }, config.reconnectInterval);
+}
+
+function stopReconnect(): void {
+  if (reconnectTimer) {
+    clearInterval(reconnectTimer);
+    reconnectTimer = undefined;
+  }
+}
+
+cometd.addListener("/meta/handshake", (message) => {
+  if (message.successful) {
+    // 再接続時は clientId が変わり以前の購読は失われるので、毎回購読し直す。
+    connected = true;
+    stopReconnect();
+    log.info("connected, clientId =", cometd.getClientId());
+    subscribeChannels();
+  } else {
+    log.error("handshake 失敗:", failureOf(message));
+    connected = false;
+    startReconnect();
+  }
+});
+cometd.addListener("/meta/connect", (message) => {
+  if (message.successful) {
+    // CometD が同一セッションで自動回復した場合は handshake リスナーが発火しないので、
+    // ここでも接続状態を戻して手動再接続を止める（購読はセッション内で維持される）。
+    connected = true;
+    stopReconnect();
+  } else {
+    log.warn("connect 失敗:", failureOf(message));
+    connected = false;
+    startReconnect();
+  }
 });
 
-let shuttingDown = false;
+cometd.handshake({ supportedConnectionTypes: ["long-polling"] });
+
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
+  stopReconnect();
   log.info("shutting down...");
 
   // disconnect が返らないまま吊られることがあるので、猶予を切って必ず終わらせる。

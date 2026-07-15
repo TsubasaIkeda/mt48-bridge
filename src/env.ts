@@ -12,6 +12,8 @@ export const config = {
   oscPort: port,
   /** メータ系チャネル (高頻度) も購読するか */
   meters: process.env.METERS === "1",
+  /** 接続が確立できていないときの再 handshake 間隔 (ミリ秒) */
+  reconnectInterval: Number.parseInt(process.env.RECONNECT_INTERVAL ?? "30000", 10),
   debug: process.env.LOG === "debug",
 } as const;
 
