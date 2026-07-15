@@ -76,12 +76,16 @@ export function createButtonTracker(names: ReadonlyMap<number, string>): ButtonT
       const messages: OscMessage[] = [];
       // 「最後に状態が変わったボタン」。同時に複数変わる（モニター切替で押した方が ON、
       // 前の選択が OFF）場合は、点灯した方＝ユーザーが操作したボタンを優先する。
+      // 対象はモニターに対応する（名前のある）ボタンだけ。Speaker B (id=6) のような
+      // 名無しボタンは、スピーカー切り替え等で変化しても last には出さない。
       let lastChanged: number | undefined;
       let lastActivated: number | undefined;
 
       for (const [id, color] of current) {
         const before = previous.get(id);
         if (before === undefined || before === color) continue;
+
+        const named = names.has(id);
 
         const offColor = OFF_COLORS[id];
         if (offColor !== undefined) {
@@ -90,7 +94,7 @@ export function createButtonTracker(names: ReadonlyMap<number, string>): ButtonT
             address: `/mt48/button/${id}`,
             args: [{ type: "integer", value: on ? 1 : 0 }],
           });
-          if (on) lastActivated = id;
+          if (on && named) lastActivated = id;
         }
 
         const name = names.get(id);
@@ -106,7 +110,7 @@ export function createButtonTracker(names: ReadonlyMap<number, string>): ButtonT
           args: [{ type: "string", value: color }],
         });
 
-        lastChanged = id;
+        if (named) lastChanged = id;
       }
 
       // 変化があれば、最後に状態が変わったボタンの ID を 1 つ出す。
