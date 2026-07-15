@@ -15,6 +15,8 @@ import type { OscMessage } from "./osc-address.js";
  * 1 対 1 で対応しており（monitors[].button_id）、その名前 (Stereo, Phone1 ...)
  * は MT48 側でユーザーが変更できる。名前をソースに焼き込むと実機とズレるので、
  * 名前は起動時に引いて /mt48/button/<id>/name で併せて送る。
+ *
+ * 加えて、最後に状態が変わったボタンの ID を /mt48/button/last で 1 つ出す。
  */
 
 export interface Trigger {
@@ -72,16 +74,23 @@ export function createButtonTracker(names: ReadonlyMap<number, string>): ButtonT
       }
 
       const messages: OscMessage[] = [];
+      // 「最後に状態が変わったボタン」。同時に複数変わる（モニター切替で押した方が ON、
+      // 前の選択が OFF）場合は、点灯した方＝ユーザーが操作したボタンを優先する。
+      let lastChanged: number | undefined;
+      let lastActivated: number | undefined;
+
       for (const [id, color] of current) {
         const before = previous.get(id);
         if (before === undefined || before === color) continue;
 
         const offColor = OFF_COLORS[id];
         if (offColor !== undefined) {
+          const on = color !== offColor;
           messages.push({
             address: `/mt48/button/${id}`,
-            args: [{ type: "integer", value: color === offColor ? 0 : 1 }],
+            args: [{ type: "integer", value: on ? 1 : 0 }],
           });
+          if (on) lastActivated = id;
         }
 
         const name = names.get(id);
@@ -96,6 +105,14 @@ export function createButtonTracker(names: ReadonlyMap<number, string>): ButtonT
           address: `/mt48/button/${id}/color`,
           args: [{ type: "string", value: color }],
         });
+
+        lastChanged = id;
+      }
+
+      // 変化があれば、最後に状態が変わったボタンの ID を 1 つ出す。
+      const last = lastActivated ?? lastChanged;
+      if (last !== undefined) {
+        messages.push({ address: "/mt48/button/last", args: [{ type: "integer", value: last }] });
       }
 
       previous = current;
