@@ -52,6 +52,26 @@ export interface ButtonTracker {
   update: (triggers: readonly Trigger[]) => OscMessage[];
 }
 
+/** モニター名が Phone（ヘッドフォン）かどうか。device-api の判定と揃える。 */
+const isPhoneName = (name: string): boolean => /^phone\s*\d+$/i.test(name.trim());
+
+/**
+ * 現在点灯しているスピーカー（Phone 以外の名前付きモニター）ボタンの ID を返す。
+ * 複数あれば最初に見つかったもの。無ければ undefined。
+ */
+function findLitSpeaker(
+  current: ReadonlyMap<number, string>,
+  names: ReadonlyMap<number, string>,
+): number | undefined {
+  for (const [id, color] of current) {
+    const name = names.get(id);
+    if (name === undefined || isPhoneName(name)) continue;
+    const offColor = OFF_COLORS[id];
+    if (offColor !== undefined && color !== offColor) return id;
+  }
+  return undefined;
+}
+
 /**
  * @param names ボタン ID -> 名前（monitors[].button_id -> monitors[].name）。
  *              引けなかった ID は名前を送らない。
@@ -80,12 +100,13 @@ export function createButtonTracker(names: ReadonlyMap<number, string>): ButtonT
       // 名無しボタンは、スピーカー切り替え等で変化しても last には出さない。
       let lastChanged: number | undefined;
       let lastActivated: number | undefined;
+      let phoneTurnedOff = false;
 
       for (const [id, color] of current) {
         const before = previous.get(id);
         if (before === undefined || before === color) continue;
 
-        const named = names.has(id);
+        const name = names.get(id);
 
         const offColor = OFF_COLORS[id];
         if (offColor !== undefined) {
@@ -94,10 +115,12 @@ export function createButtonTracker(names: ReadonlyMap<number, string>): ButtonT
             address: `/mt48/button/${id}`,
             args: [{ type: "integer", value: on ? 1 : 0 }],
           });
-          if (on && named) lastActivated = id;
+          if (name !== undefined) {
+            if (on) lastActivated = id;
+            else if (isPhoneName(name)) phoneTurnedOff = true;
+          }
         }
 
-        const name = names.get(id);
         if (name !== undefined) {
           messages.push({
             address: `/mt48/button/${id}/name`,
@@ -110,11 +133,17 @@ export function createButtonTracker(names: ReadonlyMap<number, string>): ButtonT
           args: [{ type: "string", value: color }],
         });
 
-        if (named) lastChanged = id;
+        if (name !== undefined) lastChanged = id;
       }
 
-      // 変化があれば、最後に状態が変わったボタンの ID を 1 つ出す。
-      const last = lastActivated ?? lastChanged;
+      // ヘッドフォン(Phone)が消灯し、かつ何も点灯しなかったときは、点灯している
+      // スピーカーを last にする（ヘッドフォンを外してスピーカー監視へ戻ったことを表す）。
+      let last = lastActivated ?? lastChanged;
+      if (phoneTurnedOff && lastActivated === undefined) {
+        const litSpeaker = findLitSpeaker(current, names);
+        if (litSpeaker !== undefined) last = litSpeaker;
+      }
+
       if (last !== undefined) {
         messages.push({ address: "/mt48/button/last", args: [{ type: "integer", value: last }] });
       }
